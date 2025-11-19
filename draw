@@ -10,39 +10,66 @@
         padding: 0;
         height: 100%;
         overflow: hidden;
-        background: #f0f0f0;
+        background: #f9f9f9;
         font-family: Arial, sans-serif;
         user-select: none;
     }
+
+    /* Toolbar styling */
     #toolbar {
         position: fixed;
-        top: 10px;
+        top: 0;
         left: 50%;
         transform: translateX(-50%);
-        background: white;
-        padding: 10px 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        background: #ffffffee;
+        padding: 8px 10px;
+        border-radius: 10px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.2);
         display: flex;
-        gap: 10px;
+        gap: 8px;
+        flex-wrap: wrap; /* wrap buttons on small screens */
         z-index: 1000;
         align-items: center;
+        justify-content: center;
     }
-    #toolbar button, #toolbar input[type="color"], #toolbar input[type="range"] {
+
+    #toolbar input[type="color"],
+    #toolbar input[type="range"],
+    #toolbar button {
         cursor: pointer;
+        padding: 5px;
+        font-size: 14px;
+        border-radius: 5px;
+        border: 1px solid #ccc;
+        background: #fff;
     }
+
+    #toolbar button:hover {
+        background: #f0f0f0;
+    }
+
+    #toolbar input[type="range"] {
+        width: 80px;
+    }
+
     canvas {
         display: block;
+        background: #ffffff;
+        margin-top: 60px; /* give space for toolbar */
     }
+
+    /* Note styling */
     .note {
         position: absolute;
-        background: yellow;
-        padding: 5px 10px;
-        border-radius: 5px;
+        background: #fff59d;
+        padding: 8px 12px;
+        border-radius: 6px;
         cursor: move;
         font-size: 16px;
-        box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.25);
         user-select: text;
+        max-width: 200px;
+        word-wrap: break-word;
     }
 </style>
 </head>
@@ -63,10 +90,11 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Resize canvas
+// Resize canvas to fill screen below toolbar
 function resizeCanvas() {
+    const toolbarHeight = document.getElementById('toolbar').offsetHeight + 10;
     canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    canvas.height = window.innerHeight - toolbarHeight;
 }
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
@@ -88,19 +116,50 @@ document.getElementById("clearBtn").addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     document.querySelectorAll('.note').forEach(n => n.remove());
 });
-document.getElementById("saveBtn").addEventListener("click", () => {
-    // Hide notes temporarily
-    const notes = document.querySelectorAll('.note');
-    notes.forEach(n => n.style.display = 'none');
 
-    // Save canvas
+// Save canvas including notes
+document.getElementById("saveBtn").addEventListener("click", () => {
+    // Clone canvas
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // Copy existing canvas
+    tempCtx.drawImage(canvas, 0, 0);
+
+    // Draw notes on canvas
+    const notes = document.querySelectorAll('.note');
+    notes.forEach(note => {
+        const rect = canvas.getBoundingClientRect();
+        const x = parseFloat(note.style.left) - rect.left;
+        const y = parseFloat(note.style.top) - rect.top;
+        tempCtx.fillStyle = "#fdd835"; // same as note background
+        tempCtx.fillRect(x, y, note.offsetWidth, note.offsetHeight);
+        tempCtx.fillStyle = "#000";
+        tempCtx.font = "16px Arial";
+        const words = note.textContent.split(" ");
+        let line = "";
+        let lineHeight = 18;
+        let offsetY = 14;
+        words.forEach((word) => {
+            let testLine = line + word + " ";
+            let metrics = tempCtx.measureText(testLine);
+            if (metrics.width > note.offsetWidth - 10) {
+                tempCtx.fillText(line, x + 5, y + offsetY);
+                line = word + " ";
+                offsetY += lineHeight;
+            } else {
+                line = testLine;
+            }
+        });
+        tempCtx.fillText(line, x + 5, y + offsetY);
+    });
+
     const link = document.createElement('a');
     link.download = 'doodle_note.png';
-    link.href = canvas.toDataURL();
+    link.href = tempCanvas.toDataURL();
     link.click();
-
-    // Show notes again
-    notes.forEach(n => n.style.display = 'block');
 });
 
 // Drawing functions
@@ -126,7 +185,7 @@ function draw(e) {
 
     ctx.lineWidth = brush;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = erasing ? '#f0f0f0' : color;
+    ctx.strokeStyle = erasing ? '#f9f9f9' : color;
 
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -153,47 +212,40 @@ document.getElementById("addNoteBtn").addEventListener("click", () => {
     note.className = 'note';
     note.textContent = text;
     note.style.left = '50px';
-    note.style.top = '50px';
+    note.style.top = '100px';
     document.body.appendChild(note);
 
     // Dragging
     let offsetX, offsetY, isDragging = false;
-    note.addEventListener('mousedown', e => {
-        isDragging = true;
-        offsetX = e.offsetX;
-        offsetY = e.offsetY;
-        note.style.zIndex = 1001;
-    });
-    document.addEventListener('mousemove', e => {
-        if (!isDragging) return;
-        note.style.left = (e.clientX - offsetX) + 'px';
-        note.style.top = (e.clientY - offsetY) + 'px';
-    });
-    document.addEventListener('mouseup', e => {
-        isDragging = false;
-        note.style.zIndex = 1000;
-    });
 
-    // Touch dragging
-    note.addEventListener('touchstart', e => {
+    function startDrag(e) {
         isDragging = true;
-        const touch = e.touches[0];
+        const evt = e.touches ? e.touches[0] : e;
         const rect = note.getBoundingClientRect();
-        offsetX = touch.clientX - rect.left;
-        offsetY = touch.clientY - rect.top;
+        offsetX = evt.clientX - rect.left;
+        offsetY = evt.clientY - rect.top;
         note.style.zIndex = 1001;
-        e.preventDefault();
-    });
-    document.addEventListener('touchmove', e => {
+        e.preventDefault && e.preventDefault();
+    }
+
+    function drag(e) {
         if (!isDragging) return;
-        const touch = e.touches[0];
-        note.style.left = (touch.clientX - offsetX) + 'px';
-        note.style.top = (touch.clientY - offsetY) + 'px';
-    });
-    document.addEventListener('touchend', e => {
+        const evt = e.touches ? e.touches[0] : e;
+        note.style.left = (evt.clientX - offsetX) + 'px';
+        note.style.top = (evt.clientY - offsetY) + 'px';
+    }
+
+    function endDrag() {
         isDragging = false;
         note.style.zIndex = 1000;
-    });
+    }
+
+    note.addEventListener('mousedown', startDrag);
+    note.addEventListener('touchstart', startDrag);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('touchmove', drag);
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
 });
 </script>
 
